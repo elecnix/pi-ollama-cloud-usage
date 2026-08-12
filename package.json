@@ -1,0 +1,52 @@
+{
+  "name": "pi-ollama-cloud-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pi TUI footer + notifications for Ollama Cloud usage (API-key based, no browser cookies)",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "ollama",
+    "ollama-cloud",
+    "statusline",
+    "usage"
+  ],
+  "license": "MIT",
+  "author": "Nicolas Bailon <nicolas@elecnix.dev>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elecnix/pi-ollama-cloud-usage.git"
+  },
+  "files": [
+    "index.ts",
+    "usage.ts",
+    "bar.ts",
+    "alerts.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "biome check --write . && tsgo --noEmit",
+    "lint": "biome check .",
+    "typecheck": "tsgo --noEmit",
+    "format": "biome format --write .",
+    "test": "vitest run"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2",
+    "@types/node": "^22.10.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "tsx": "^4.19.0",
+    "vitest": "^4.1.6"
+  }
+}
