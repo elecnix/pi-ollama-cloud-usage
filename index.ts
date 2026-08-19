@@ -99,23 +99,13 @@ export default function (pi: ExtensionAPI) {
   let renderReq: { requestRender: () => void } | null = null;
   let widgetReg: RegisteredWidget | null = null;
 
-  // Generic ANSI colors for the composer path. The bridge strips these on the
-  // stock footer (line 3) and passes them through on pi-statusbar /
-  // pi-powerline-footer. When those composers expose their theme fg (see
-  // kreeger/pi-statusbar#2, nicobailon/pi-powerline-footer#176), this can
-  // switch to theme-aware coloring.
-  const ANSI = {
-    green: "\x1b[32m",
-    yellow: "\x1b[33m",
-    red: "\x1b[31m",
-    accent: "\x1b[36m",
-    reset: "\x1b[0m",
-  } as const;
-  function ansiFor(pct: number): string {
-    if (pct >= 90) return ANSI.red;
-    if (pct >= 80) return ANSI.yellow;
-    if (pct >= 50) return ANSI.accent;
-    return ANSI.green;
+  // Theme-aware color for the composer/line-3 path. ctx.ui.theme.fg (pi-core)
+  // produces theme-correct ANSI, and ctx.ui.setStatus passes it through
+  // verbatim on the stock footer, pi-statusbar, and pi-powerline-footer — so
+  // per-threshold color (green/yellow/red) survives everywhere today.
+  function extThemeFg(): ((color: string, text: string) => string) | undefined {
+    const t = lastCtx?.ui?.theme;
+    return t?.fg ? (color: string, text: string) => t.fg(color as never, text) : undefined;
   }
 
   function notifyAlerts(alerts: Alert[], ctx: ExtensionContext) {
@@ -178,14 +168,18 @@ export default function (pi: ExtensionAPI) {
     return line;
   }
 
-  /** Composer/line-3 string with per-threshold ANSI color (self-colorized). */
-  function usageLineColored(): string {
+  /** Composer/line-3 string with per-threshold theme color (via ctx.ui.theme.fg). */
+  function usageLineColored(themeFg?: (color: string, text: string) => string): string {
     if (!lastUsage) return "";
-    const s = `${ansiFor(lastUsage.sessionPct)}${renderBar("5h", lastUsage.sessionPct)}${ANSI.reset}`;
-    const w = `${ansiFor(lastUsage.weeklyPct)}${renderBar("7d", lastUsage.weeklyPct)}${ANSI.reset}`;
+    const wrap = (pct: number, label: string): string => {
+      const bar = renderBar(label, pct);
+      return themeFg ? themeFg(barColor(pct), bar) : bar;
+    };
+    const s = wrap(lastUsage.sessionPct, "5h");
+    const w = wrap(lastUsage.weeklyPct, "7d");
     let line = `${s}  ${w}`;
     if (lastUsage.extraPct != null) {
-      line += `  ${ansiFor(lastUsage.extraPct)}${renderBar("$", lastUsage.extraPct)}${ANSI.reset}`;
+      line += `  ${wrap(lastUsage.extraPct, "$")}`;
     }
     return line;
   }
@@ -263,7 +257,7 @@ export default function (pi: ExtensionAPI) {
       id: "ollama-cloud",
       render: (acc) =>
         cfg.alwaysShowFooter || acc.getModel()?.provider === OLLAMA_PROVIDER
-          ? usageLineColored()
+          ? usageLineColored(acc.getThemeFg() ?? extThemeFg())
           : "",
       selfColorize: true,
       layout: { placement: "right", priority: 60, minWidth: 24 },
@@ -274,7 +268,7 @@ export default function (pi: ExtensionAPI) {
   /** Re-emit the widget, gated by the same showFooter rule as the legacy path. */
   function pushWidget(ctx: ExtensionContext): void {
     if (!widgetReg) return;
-    widgetReg.update(showFooter(ctx) ? usageLineColored() : "");
+    widgetReg.update(showFooter(ctx) ? usageLineColored(extThemeFg()) : "");
   }
 
   pi.on("session_start", async (_event, ctx) => {
