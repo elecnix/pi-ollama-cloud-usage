@@ -1,6 +1,6 @@
 {
   "name": "pi-ollama-cloud-usage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Pi TUI footer + notifications for Ollama Cloud usage (API-key based, no browser cookies)",
   "keywords": [
@@ -41,6 +41,9 @@
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "dependencies": {
+    "pi-footer-widget": "github:elecnix/pi-footer-widget#v0.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2",

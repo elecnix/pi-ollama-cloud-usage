@@ -20,7 +20,14 @@ with the Ollama Cloud API key Pi already stores in `~/.pi/agent/auth.json`.
   - `7d` weekly (7-day window) usage bar
   - `$` extra-usage balance bar (only when Ollama reports one)
   - Bars colored by absolute threshold: green < 50%, accent 50–79%, yellow 80–89%, red ≥ 90%
-  - Token stats + context % + active model on the same line, cwd + git branch above it
+  - **Does not replace the default footer.** By default the bar is emitted as a
+    footer widget via [`pi-footer-widget`](https://github.com/elecnix/pi-footer-widget),
+    so it appears on the extension-statuses line (line 3) and composes with
+    [pi-statusbar](https://github.com/kreeger/pi-statusbar) and
+    [pi-powerline-footer](https://github.com/nicobailon/pi-powerline-footer)
+    without clobbering the session name, token stats, or model line.
+  - Set `"legacyFooter": true` to restore the previous behavior of owning the
+    full footer via `setFooter` (stats + context + model on one line).
 - **Threshold notifications** (TUI **and** RPC mode — never a tool call, never
   enters LLM context):
   - **session & weekly**: a notification at every 10% increment (10, 20, … 100%)
@@ -82,12 +89,38 @@ Optional JSON config (project-local overrides global):
 | --- | --- | --- | --- |
 | `alwaysShowFooter` | boolean | `false` | Render the footer even when `ollama-cloud` is not the active provider |
 | `intervalMs` | number | `300000` (5 min) | Refresh interval, clamped to a minimum of 30s |
+| `legacyFooter` | boolean | `false` | Own the full footer via `setFooter` (pre-0.2 behavior) instead of emitting a composer/line-3 widget |
 
 Example:
 
 ```json
 { "alwaysShowFooter": true, "intervalMs": 120000 }
 ```
+
+## Composer integration
+
+Since 0.2 the extension no longer replaces the default footer by default.
+Instead it registers a footer widget through
+[`pi-footer-widget`](https://github.com/elecnix/pi-footer-widget), which adapts
+the bar to whichever footer composer is installed:
+
+- **[pi-statusbar](https://github.com/kreeger/pi-statusbar)**: add `"ollama-cloud"`
+  to the `sections` array in `~/.pi/agent/statusbar.json`.
+- **[pi-powerline-footer](https://github.com/nicobailon/pi-powerline-footer)**:
+  add a `customItems` entry to your `powerline` config:
+  ```json
+  { "powerline": { "customItems": [
+    { "id": "ollama", "statusKey": "ollama-cloud", "position": "right", "color": "warning" }
+  ]}}
+  ```
+- **Stock footer**: nothing to configure — the bar appears on the
+  extension-statuses line (line 3). Per-threshold ANSI color is stripped on the
+  stock footer and preserved on the composers (until they expose their theme;
+  see [kreeger/pi-statusbar#2](https://github.com/kreeger/pi-statusbar/issues/2),
+  [nicobailon/pi-powerline-footer#176](https://github.com/nicobailon/pi-powerline-footer/issues/176)).
+
+This is a **net behavior change** from 0.1 (which owned the footer). Set
+`"legacyFooter": true` to restore the old single-footer layout.
 
 ## Commands
 
