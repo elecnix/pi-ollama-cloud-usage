@@ -17,6 +17,7 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { type Alert, computeAlerts, initialThresholdState, seedState, type ThresholdState } from "./alerts.ts";
 import { barColor, renderBar } from "./bar.ts";
+import { registerFooterWidget, type RegisteredWidget } from "pi-footer-widget";
 import { fetchUsage, readApiKey, type UsageData } from "./usage.ts";
 
 const OLLAMA_PROVIDER = "ollama-cloud";
@@ -29,6 +30,8 @@ interface Config {
   alwaysShowFooter: boolean;
   /** Refresh interval in milliseconds (clamped to >= 30s). */
   intervalMs: number;
+  /** Use the legacy setFooter() footer replacement instead of the composer/line-3 path. */
+  legacyFooter: boolean;
 }
 
 interface ResolvedState {
@@ -37,7 +40,7 @@ interface ResolvedState {
 }
 
 function readConfig(): Config {
-  const cfg: Config = { alwaysShowFooter: false, intervalMs: DEFAULT_INTERVAL_MS };
+  const cfg: Config = { alwaysShowFooter: false, intervalMs: DEFAULT_INTERVAL_MS, legacyFooter: false };
   const paths = [
     join(process.env.HOME || "", ".pi/agent/ollama-cloud-usage.json"),
     join(process.cwd(), ".pi/ollama-cloud-usage.json"),
@@ -47,6 +50,7 @@ function readConfig(): Config {
       const o = JSON.parse(readFileSync(p, "utf8")) as Partial<Config>;
       if (typeof o.alwaysShowFooter === "boolean") cfg.alwaysShowFooter = o.alwaysShowFooter;
       if (typeof o.intervalMs === "number") cfg.intervalMs = o.intervalMs;
+      if (typeof o.legacyFooter === "boolean") cfg.legacyFooter = o.legacyFooter;
     } catch {
       /* ignore */
     }
@@ -93,6 +97,16 @@ export default function (pi: ExtensionAPI) {
   let active = false;
   let lastCtx: ExtensionContext | null = null;
   let renderReq: { requestRender: () => void } | null = null;
+  let widgetReg: RegisteredWidget | null = null;
+
+  // Theme-aware color for the composer/line-3 path. ctx.ui.theme.fg (pi-core)
+  // produces theme-correct ANSI, and ctx.ui.setStatus passes it through
+  // verbatim on the stock footer, pi-statusbar, and pi-powerline-footer — so
+  // per-threshold color (green/yellow/red) survives everywhere today.
+  function extThemeFg(): ((color: string, text: string) => string) | undefined {
+    const t = lastCtx?.ui?.theme;
+    return t?.fg ? (color: string, text: string) => t.fg(color as never, text) : undefined;
+  }
 
   function notifyAlerts(alerts: Alert[], ctx: ExtensionContext) {
     for (const a of alerts) {
@@ -121,6 +135,7 @@ export default function (pi: ExtensionAPI) {
         writeState(thresh);
         seeded = true;
         renderReq?.requestRender();
+        pushWidget(ctx);
         return;
       }
       seeded = true;
@@ -136,6 +151,7 @@ export default function (pi: ExtensionAPI) {
         notifyAlerts(alerts, ctx);
       }
       renderReq?.requestRender();
+      pushWidget(ctx);
     } catch {
       /* unreadable this cycle; the next tick retries */
     }
@@ -148,6 +164,22 @@ export default function (pi: ExtensionAPI) {
     let line = `${s}  ${w}`;
     if (lastUsage.extraPct != null) {
       line += `  ${theme.fg(barColor(lastUsage.extraPct), renderBar("$", lastUsage.extraPct))}`;
+    }
+    return line;
+  }
+
+  /** Composer/line-3 string with per-threshold theme color (via ctx.ui.theme.fg). */
+  function usageLineColored(themeFg?: (color: string, text: string) => string): string {
+    if (!lastUsage) return "";
+    const wrap = (pct: number, label: string): string => {
+      const bar = renderBar(label, pct);
+      return themeFg ? themeFg(barColor(pct), bar) : bar;
+    };
+    const s = wrap(lastUsage.sessionPct, "5h");
+    const w = wrap(lastUsage.weeklyPct, "7d");
+    let line = `${s}  ${w}`;
+    if (lastUsage.extraPct != null) {
+      line += `  ${wrap(lastUsage.extraPct, "$")}`;
     }
     return line;
   }
@@ -217,6 +249,28 @@ export default function (pi: ExtensionAPI) {
     return cfg.alwaysShowFooter || isOllamaCloud(ctx);
   }
 
+  /** Register the usage bar as a composer-agnostic footer widget (line-3 fallback). */
+  function registerComposerWidget(ctx: ExtensionContext): void {
+    if (!ctx.hasUI) return;
+    widgetReg?.dispose();
+    widgetReg = registerFooterWidget(ctx, {
+      id: "ollama-cloud",
+      render: (acc) =>
+        cfg.alwaysShowFooter || acc.getModel()?.provider === OLLAMA_PROVIDER
+          ? usageLineColored(acc.getThemeFg() ?? extThemeFg())
+          : "",
+      selfColorize: true,
+      layout: { placement: "right", priority: 60, minWidth: 24 },
+      refreshMs: cfg.intervalMs,
+    });
+  }
+
+  /** Re-emit the widget, gated by the same showFooter rule as the legacy path. */
+  function pushWidget(ctx: ExtensionContext): void {
+    if (!widgetReg) return;
+    widgetReg.update(showFooter(ctx) ? usageLineColored(extThemeFg()) : "");
+  }
+
   pi.on("session_start", async (_event, ctx) => {
     lastCtx = ctx;
     const resolved = readState();
@@ -224,14 +278,23 @@ export default function (pi: ExtensionAPI) {
     stateExisted = resolved.existed;
     seeded = false;
     active = true;
-    if (showFooter(ctx)) setFooter(ctx);
+    if (cfg.legacyFooter) {
+      if (showFooter(ctx)) setFooter(ctx);
+    } else {
+      registerComposerWidget(ctx);
+    }
     startTimer(ctx);
   });
 
   pi.on("model_select", async (_event, ctx) => {
     lastCtx = ctx;
-    if (showFooter(ctx)) setFooter(ctx);
-    else clearFooter(ctx);
+    if (cfg.legacyFooter) {
+      if (showFooter(ctx)) setFooter(ctx);
+      else clearFooter(ctx);
+    }
+    // composer/line-3 path: render() checks the active provider via accessors,
+    // so no re-registration is needed on model switch. Re-emit gated by provider.
+    pushWidget(ctx);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
@@ -242,7 +305,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     active = false;
     stopTimer();
-    clearFooter(ctx);
+    widgetReg?.dispose();
+    widgetReg = null;
+    if (cfg.legacyFooter) clearFooter(ctx);
   });
 
   pi.registerCommand("ollama-usage", {
